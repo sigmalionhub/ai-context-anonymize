@@ -4,9 +4,23 @@ PII masking and DLP library for LLM pipelines. Detects sensitive data in text be
 
 Zero runtime dependencies. TypeScript-first.
 
-## The problem it solves
+## The Problem
 
-When users send messages to an LLM they often include emails, phone numbers, IBANs, passport data, API keys, and database credentials. Sending this data to a third-party API violates GDPR and creates security risks.
+Every time a user sends a message to an LLM-powered feature, they risk exposing data they didn't mean to share — and your app becomes the vehicle for that leak.
+
+Consider a typical support chat: a user pastes their IBAN to ask about a transfer, includes their email, mentions their tax ID. Your app forwards that message verbatim to OpenAI or Anthropic. That data now leaves your infrastructure, gets logged, potentially used for training, and is subject to the data retention policies of a third party you don't control.
+
+Now multiply that by API keys accidentally pasted into prompts, database connection strings included in error messages, passwords in "can you help me fix this config" requests.
+
+**The risks:**
+
+- **GDPR violation** — personal data (emails, phone numbers, national IDs) sent to a third-party processor without a legal basis
+- **Secret leakage** — API keys, credentials, and private keys sent to an external API and stored in its logs
+- **Data residency** — PII leaving a jurisdiction it's not allowed to leave
+
+The standard advice is "tell users not to paste sensitive data." That doesn't work. Users don't read warnings, and they shouldn't have to think about your infrastructure when asking for help.
+
+## How it works
 
 This library sits between your app and the LLM:
 
