@@ -28,7 +28,7 @@ This library sits between your app and the LLM:
 user input → protect() → LLM → restore() → final response
 ```
 
-- **MASK** — replaces PII with a reversible token (`«em1»`, `«ph1»`, `«fin1»`). The LLM works with tokens and returns them in the response. You restore the original values after.
+- **MASK** — replaces PII with a reversible token (`«em1·…»`, `«ph1·…»`). The LLM works with tokens and returns them in the response. You restore original values after.
 - **REDACT** — replaces with `«REDACTED»`. Irreversible. For data that must not reach the model.
 - **BLOCK** — sets `isSafe: false`. The request must not be sent to the LLM at all. For secrets and credentials.
 
@@ -50,7 +50,7 @@ if (!result.isSafe) {
   process.exit(1);
 }
 
-// result.protectedText → "Send the invoice to «em1», call «ph1»."
+// result.protectedText → "Send the invoice to «em1·…», call «ph1·…»."
 const llmResponse = await callLLM(result.protectedText);
 
 // restore original values in the model's answer
@@ -75,17 +75,18 @@ interface ProtectResult {
 ```ts
 const result = protect("Transfer to UA213223130000026007233566001");
 // result.isSafe        → true
-// result.protectedText → "Transfer to «fin1»"
-// result.map           → Map { "«fin1»" → "UA213223130000026007233566001" }
+// result.protectedText → "Transfer to «fin1·…»"
+// result.map           → Map { "«fin1·…»" → "UA213223130000026007233566001" }
 ```
 
 Blocked example:
 
 ```ts
 const result = protect("password=s3cr3t123");
-// result.isSafe      → false
-// result.violations  → ["PASSWORD_IN_TEXT"]
-// result.map         → Map {} (empty — nothing was sent)
+// result.isSafe        → false
+// result.protectedText → ""  (never exposes the original text)
+// result.violations    → ["PASSWORD_IN_TEXT"]
+// result.map           → Map {} (empty — nothing was sent)
 ```
 
 ### `restore(text, map)`
@@ -93,13 +94,26 @@ const result = protect("password=s3cr3t123");
 Replaces tokens in the LLM response with original values:
 
 ```ts
-const final = restore("I will contact «em1» tomorrow.", result.map);
+const final = restore("I will contact «em1·…» tomorrow.", result.map);
 // → "I will contact anna@company.ua tomorrow."
+```
+
+### `mapToRecord(map)`
+
+Converts the token map to a plain object for JSON serialization:
+
+```ts
+import { protect, mapToRecord } from "ai-context-anonymize";
+
+const result = protect("Contact user@example.com");
+const serializable = mapToRecord(result.map);
+// → { "«em1·…»": "user@example.com" }
+JSON.stringify(serializable); // safe
 ```
 
 ### `new Anonymizer(config?)`
 
-Use the class directly when you need custom rules or a non-default configuration:
+Use the class directly when you need custom rules or a shared instance for multiple calls:
 
 ```ts
 import { Anonymizer, EntityCategory, SecurityLevel } from "ai-context-anonymize";
@@ -119,13 +133,54 @@ const result = anon.protect("Order ORD-123456 is ready.");
 const response = anon.restore(llmText, result.map);
 ```
 
+### `new StreamingAnonymizer(config?)`
+
+Processes LLM output token-by-token without buffering the full response. Useful when working with streaming APIs (OpenAI, Anthropic, etc.):
+
+```ts
+import { StreamingAnonymizer, restore } from "ai-context-anonymize";
+
+const stream = new StreamingAnonymizer({ windowSize: 512 });
+let fullOutput = "";
+
+for await (const chunk of llmStream) {
+  const { output, isSafe, violations } = stream.write(chunk);
+  if (!isSafe) {
+    console.error("Secret detected mid-stream:", violations);
+    break;
+  }
+  fullOutput += output;
+  forwardToUser(output); // safe to send immediately
+}
+
+const final = stream.flush(); // process remaining buffer
+if (!final.isSafe) {
+  console.error("Secret detected at end:", final.violations);
+} else {
+  fullOutput += final.protectedText;
+  forwardToUser(final.protectedText);
+}
+
+// restore original values in the full response
+const restored = restore(fullOutput, final.map);
+```
+
+**How the window works:** `StreamingAnonymizer` holds the last `windowSize` characters in a pending buffer — a span large enough to contain any possible PII match. Text that has moved beyond that window is confirmed safe and emitted by `write()`. The remaining buffer is flushed at the end.
+
+**`windowSize` guidance:** default is `2048`, which covers all built-in rules except 4096-bit RSA private keys (~3.5 KB). Raise it if you enable rules that match longer spans.
+
+**BLOCK in streaming:** if a BLOCK pattern is fully within the emitted zone, `write()` returns `isSafe: false` immediately and all subsequent `write()` calls return empty. If the pattern falls within the pending buffer, it is caught by `flush()`. Output already forwarded from previous `write()` calls cannot be recalled — handle `isSafe: false` by closing the connection.
+
 #### Config options
 
-| Option | Type | Description |
-|---|---|---|
-| `rules` | `DetectorRule[]` | Additional rules merged on top of built-ins |
-| `replaceBuiltinRules` | `boolean` | When `true`, use only `rules` — discard built-ins |
-| `redactPlaceholder` | `string` | Custom placeholder for REDACT. Default: `«REDACTED»` |
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `rules` | `DetectorRule[]` | — | Additional rules merged on top of built-ins |
+| `replaceBuiltinRules` | `boolean` | `false` | When `true`, use only `rules` — discard built-ins |
+| `redactPlaceholder` | `string` | `«REDACTED»` | Custom placeholder for REDACT level |
+| `nonceProvider` | `() => string` | `Math.random` | Token nonce source. Pass a fixed function for deterministic output in tests |
+| `windowSize` | `number` | `2048` | Pending buffer size for `StreamingAnonymizer` (chars) |
+| `maxBufferSize` | `number` | `0` (unlimited) | Hard cap on `StreamingAnonymizer` buffer. Throws if exceeded. |
 
 ## Built-in detectors
 
@@ -157,10 +212,9 @@ const response = anon.restore(llmText, result.map);
 | `NPM_TOKEN` | `npm_…` |
 | `BEARER_TOKEN` | `Authorization: Bearer …` |
 | `RSA_PRIVATE_KEY` | PEM blocks (RSA, EC, DSA, OpenSSH) |
-| `SSH_PRIVATE_KEY` | OpenSSH private key blocks |
 | `DB_CONNECTION_STRING` | `postgresql://…`, `mongodb://…`, `redis://…` |
 | `JWT_TOKEN` | Three-part base64url tokens |
-| `PASSWORD_IN_TEXT` | `password=…`, `token=…`, `secret:…` |
+| `PASSWORD_IN_TEXT` | `password=…`, `secret:…` |
 
 ## Custom rules
 
@@ -188,7 +242,7 @@ const anon = new Anonymizer({
 });
 ```
 
-Custom validators:
+Custom validator (runs after the regex, return `false` to discard the match):
 
 ```ts
 const anon = new Anonymizer({
@@ -198,7 +252,7 @@ const anon = new Anonymizer({
       category: EntityCategory.IDENTITY,
       level: SecurityLevel.MASK,
       patterns: [/\d{8}/g],
-      validate: (raw) => raw.startsWith("42"), // extra check after regex
+      validate: (raw) => raw.startsWith("42"),
     },
   ],
 });
@@ -211,18 +265,18 @@ The checksum validators used internally are also exported for standalone use:
 ```ts
 import { luhnCheck, ibanCheck, rnokkpCheck, btcAddressCheck, ethAddressCheck } from "ai-context-anonymize";
 
-luhnCheck("4532015112830366");     // true
+luhnCheck("4532015112830366");        // true
 ibanCheck("DE89370400440532013000"); // true
-rnokkpCheck("1234567899");         // true
+rnokkpCheck("1234567899");           // true
 ```
 
 ## Security levels
 
 | Level | Behavior | `isSafe` | Token in map |
 |---|---|---|---|
-| `MASK` | Replaced with `«em1»`, `«ph1»`, etc. | `true` | yes |
+| `MASK` | Replaced with `«em1·…»`, `«ph1·…»`, etc. | `true` | yes |
 | `REDACT` | Replaced with `«REDACTED»` | `true` | no |
-| `BLOCK` | Text unchanged, request must be aborted | `false` | no |
+| `BLOCK` | `protectedText: ""`, request must be aborted | `false` | no |
 
 ## License
 

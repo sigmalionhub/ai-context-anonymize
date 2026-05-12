@@ -29,6 +29,9 @@ export interface AnonymizerConfig {
   rules?: DetectorRule[];
   replaceBuiltinRules?: boolean;
   redactPlaceholder?: string;
+  nonceProvider?: () => string;
+  windowSize?: number;
+  maxBufferSize?: number;
 }
 
 export interface ProtectResult {

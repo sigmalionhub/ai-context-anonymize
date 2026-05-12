@@ -39,7 +39,7 @@ const IBAN: DetectorRule = {
   name: "IBAN",
   category: EntityCategory.FINANCIAL,
   level: M,
-  patterns: [/\b(UA\d{2}[A-Z0-9]{25})\b/g, /\b([A-Z]{2}\d{2}[A-Z0-9]{11,30})\b/g],
+  patterns: [/\b([A-Z]{2}\d{2}[A-Z0-9]{11,30})\b/g],
   validate: ibanCheck,
 };
 
@@ -108,7 +108,7 @@ const AZURE_TOKEN: DetectorRule = {
   level: B,
   patterns: [
     /(?:DefaultEndpointsProtocol=https;AccountName=[^;]+;AccountKey=)([A-Za-z0-9+/=]{88})/g,
-    /\b(sv=\d{4}-\d{2}-\d{2}&[^&\s"']{20,})/g,
+    /\b(sv=\d{4}-\d{2}-\d{2}&(?:[^&\s"'<>]+&)*sig=[A-Za-z0-9+/%]{20,}(?:&[^&\s"'<>]*)*)/g,
   ],
 };
 
