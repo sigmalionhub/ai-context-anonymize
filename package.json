@@ -23,7 +23,16 @@
     "gdpr",
     "llm",
     "privacy",
-    "ukraine"
+    "ukraine",
+    "masking",
+    "redact",
+    "data-protection",
+    "openai",
+    "anthropic",
+    "langchain",
+    "rag",
+    "security",
+    "typescript"
   ],
   "license": "MIT",
   "devDependencies": {
