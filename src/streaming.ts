@@ -1,12 +1,34 @@
 import type { AnonymizerConfig, ProtectResult } from "./types.ts";
 import { buildRules, collectMatches, applyMatches, type ApplyState } from "./engine.ts";
 
+/** Return value of `StreamingAnonymizer#write()`. */
 export interface StreamWriteResult {
+  /** Anonymized text safe to forward downstream. `""` when `isSafe` is `false` or the buffer is still filling. */
   output: string;
+  /** `false` when a BLOCK rule fired; stop the stream immediately. */
   isSafe: boolean;
+  /** Names of BLOCK rules that fired. Empty when `isSafe` is `true`. */
   violations: string[];
 }
 
+/**
+ * Token-by-token anonymizer for LLM streaming output.
+ *
+ * Feed chunks as they arrive with `write()`; call `flush()` when the stream
+ * ends to process any buffered remainder. The `windowSize` tail is held back
+ * on each `write()` to ensure PII that spans chunk boundaries is caught.
+ *
+ * @example
+ * const stream = new StreamingAnonymizer({ windowSize: 512 });
+ * for (const chunk of llmStream) {
+ *   const { output, isSafe } = stream.write(chunk);
+ *   if (!isSafe) { closeStream(); break; }
+ *   forward(output);
+ * }
+ * const final = stream.flush();
+ * if (final.isSafe) forward(final.protectedText);
+ * const answer = restore(fullResponse, final.map);
+ */
 export class StreamingAnonymizer {
   private readonly rules: ReturnType<typeof buildRules>;
   private readonly redactPlaceholder: string;
@@ -32,6 +54,13 @@ export class StreamingAnonymizer {
     };
   }
 
+  /**
+   * Append a chunk to the internal buffer and emit the portion that is
+   * safely past the `windowSize` overlap guard.
+   *
+   * @returns `output` — anonymized text ready to forward; `""` while the
+   *   buffer is still filling or after an abort.
+   */
   write(chunk: string): StreamWriteResult {
     if (this.aborted) return { output: "", isSafe: false, violations: this.abortViolations };
     if (this.flushed) return { output: "", isSafe: true, violations: [] };
@@ -63,6 +92,13 @@ export class StreamingAnonymizer {
     return { output, isSafe: true, violations: [] };
   }
 
+  /**
+   * Process the remaining buffer and finalize the session.
+   *
+   * Safe to call multiple times — subsequent calls return the same result
+   * without reprocessing. Use `flush().map` as the restore map for the full
+   * concatenated LLM response.
+   */
   flush(): ProtectResult {
     if (this.aborted) {
       return { protectedText: "", map: new Map(), isSafe: false, violations: this.abortViolations };
