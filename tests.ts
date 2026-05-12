@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { Anonymizer, SecurityLevel, EntityCategory, protect, restore, type ProtectResult } from "./src/index.ts";
+import { Anonymizer, StreamingAnonymizer, SecurityLevel, EntityCategory, protect, restore, mapToRecord, type ProtectResult, type StreamWriteResult } from "./src/index.ts";
 import { luhnCheck, ibanCheck, rnokkpCheck } from "./src/validators.ts";
 
 function tokenFor(result: ProtectResult, value: string): string {
@@ -249,13 +249,235 @@ describe("functional API — protect", () => {
   });
 
   it("uses built-in rules when no config passed", () => {
+    const r = protect("user@test.com");
+    assert.ok(r.isSafe);
+    assert.equal(r.map.size, 1);
+  });
+});
+
+describe("mapToRecord", () => {
+  it("converts map to plain object for JSON serialization", () => {
+    const r = protect("Send to alice@corp.ua.");
+    const rec = mapToRecord(r.map);
+    assert.ok(typeof rec === "object" && !Array.isArray(rec));
+    const token = tokenFor(r, "alice@corp.ua");
+    assert.equal(rec[token], "alice@corp.ua");
+    assert.doesNotThrow(() => JSON.stringify(rec));
+  });
+
+  it("tokens are unique per protect() call (nonce)", () => {
     const r1 = protect("user@test.com");
     const r2 = protect("user@test.com");
-    assert.equal(
-      tokenFor(r1, "user@test.com"),
-      tokenFor(r2, "user@test.com"),
-      "same input produces same token"
+    assert.notEqual(tokenFor(r1, "user@test.com"), tokenFor(r2, "user@test.com"));
+  });
+
+  it("literal token-shaped text in input is not falsely restored", () => {
+    const r = protect("email: foo@bar.com");
+    const token = tokenFor(r, "foo@bar.com");
+    const injected = `${r.protectedText} and also ${token} already here`;
+    const restored = restore(injected, r.map);
+    assert.ok(restored.includes("foo@bar.com"));
+    assert.ok(!restored.includes(token));
+  });
+});
+
+describe("Anonymizer — nonceProvider", () => {
+  it("produces deterministic tokens when nonceProvider is fixed", () => {
+    const anon1 = new Anonymizer({ nonceProvider: () => "test1" });
+    const anon2 = new Anonymizer({ nonceProvider: () => "test1" });
+    const r1 = anon1.protect("user@test.com");
+    const r2 = anon2.protect("user@test.com");
+    assert.equal(tokenFor(r1, "user@test.com"), tokenFor(r2, "user@test.com"));
+  });
+
+  it("different nonceProvider values produce different tokens", () => {
+    const anon1 = new Anonymizer({ nonceProvider: () => "aaa11" });
+    const anon2 = new Anonymizer({ nonceProvider: () => "bbb22" });
+    const r1 = anon1.protect("user@test.com");
+    const r2 = anon2.protect("user@test.com");
+    assert.notEqual(tokenFor(r1, "user@test.com"), tokenFor(r2, "user@test.com"));
+  });
+});
+
+describe("StreamingAnonymizer", () => {
+  it("returns empty output while buffer is smaller than windowSize", () => {
+    const stream = new StreamingAnonymizer({ windowSize: 100, nonceProvider: () => "t" });
+    const r = stream.write("Hello world");
+    assert.equal(r.output, "");
+    assert.ok(r.isSafe);
+  });
+
+  it("emits safe prefix once buffer exceeds windowSize", () => {
+    const stream = new StreamingAnonymizer({ windowSize: 10, nonceProvider: () => "t" });
+    // 20-char chunk → safeBoundary = 10 → first 10 chars emitted (no PII there)
+    const r = stream.write("Hello world, safe text here");
+    assert.ok(r.output.length > 0);
+    assert.ok(r.isSafe);
+  });
+
+  it("masks PII that arrives split across write() calls", () => {
+    // windowSize large enough to hold entire email (13 chars = alice@corp.ua)
+    // Split at word boundary BEFORE the email so email stays intact in buffer
+    const stream = new StreamingAnonymizer({ windowSize: 50, nonceProvider: () => "t" });
+    const r1 = stream.write("Send report to ");       // 15 chars — buffer < windowSize, empty output
+    assert.equal(r1.output, "");
+    const r2 = stream.write("alice@corp.ua for review."); // total 40 chars — still < 50
+    assert.equal(r2.output, "");
+    const final = stream.flush();
+    assert.ok(final.isSafe);
+    assert.ok(final.protectedText.includes("«em1·t»"));
+    assert.ok(!final.protectedText.includes("alice@corp.ua"));
+  });
+
+  it("deduplicates same PII value across write() calls", () => {
+    const stream = new StreamingAnonymizer({ windowSize: 20, nonceProvider: () => "t" });
+    // write() #2: 41-char buffer → safeBoundary=21 → "Contact foo@bar.com a" in safe zone (email matched)
+    // flush(): remaining "nd also foo@bar.com." → same email, same token via valueToToken lookup
+    const w1 = stream.write("Contact ");
+    const w2 = stream.write("foo@bar.com and also foo@bar.com.");
+    const final = stream.flush();
+    assert.ok(final.isSafe);
+    assert.equal(final.map.size, 1);
+    const combined = w1.output + w2.output + final.protectedText;
+    const token = [...final.map.keys()][0]!;
+    assert.equal(combined.split(token).length - 1, 2);
+  });
+
+  it("detects BLOCK in write() when secret is in safe zone", () => {
+    // windowSize=10, large chunk → safe zone contains the API key
+    const stream = new StreamingAnonymizer({ windowSize: 10 });
+    const key = `sk-proj-${"A".repeat(50)}`;
+    const r = stream.write(`use key=${key} in config`);
+    assert.ok(!r.isSafe);
+    assert.ok(r.violations.includes("OPENAI_API_KEY"));
+    assert.equal(r.output, "");
+  });
+
+  it("detects BLOCK in flush() when secret fits inside windowSize", () => {
+    const stream = new StreamingAnonymizer({ windowSize: 2048 });
+    const key = `sk-proj-${"B".repeat(50)}`;
+    const r1 = stream.write(`use ${key}`);
+    // key is in pending zone, write() returns safe (no PII in safe text yet)
+    assert.ok(r1.isSafe);
+    const final = stream.flush();
+    assert.ok(!final.isSafe);
+    assert.ok(final.violations.includes("OPENAI_API_KEY"));
+  });
+
+  it("subsequent write() calls after abort return isSafe: false", () => {
+    const stream = new StreamingAnonymizer({ windowSize: 10 });
+    const key = `sk-proj-${"C".repeat(50)}`;
+    stream.write(`use ${key} here`);
+    const r = stream.write("more text");
+    assert.ok(!r.isSafe);
+    assert.equal(r.output, "");
+  });
+
+  it("flush() on empty stream returns safe empty result", () => {
+    const stream = new StreamingAnonymizer({ nonceProvider: () => "t" });
+    const final = stream.flush();
+    assert.ok(final.isSafe);
+    assert.equal(final.protectedText, "");
+    assert.equal(final.map.size, 0);
+  });
+
+  it("round-trip: write chunks → flush → restore", () => {
+    const stream = new StreamingAnonymizer({ windowSize: 50, nonceProvider: () => "rnd" });
+    const out1 = stream.write("Hello, ").output;
+    const out2 = stream.write("please contact ").output;
+    const out3 = stream.write("bob@example.com for details.").output;
+    const final = stream.flush();
+    assert.ok(final.isSafe);
+    const fullProtected = out1 + out2 + out3 + final.protectedText;
+    assert.ok(!fullProtected.includes("bob@example.com"));
+    const restored = restore(fullProtected, final.map);
+    assert.ok(restored.includes("bob@example.com"));
+  });
+
+  it("token contains the configured nonce from constructor", () => {
+    // windowSize > text length → everything goes to flush(), nonce comes from constructor
+    const stream = new StreamingAnonymizer({ windowSize: 200, nonceProvider: () => "mykey" });
+    stream.write("Reach me at user@domain.com for info.");
+    const final = stream.flush();
+    assert.ok(final.isSafe);
+    const token = [...final.map.keys()][0]!;
+    assert.ok(token.includes("mykey"), `token should embed nonce, got: ${token}`);
+  });
+});
+
+describe("Anonymizer — P0 audit fixes", () => {
+  it("protectedText is empty string on BLOCK (not the original text)", () => {
+    const r = protect(`key=sk-proj-${"A".repeat(50)}`);
+    assert.ok(!r.isSafe);
+    assert.equal(r.protectedText, "");
+  });
+
+  it("captures correct span via indices when value repeats in keyword", () => {
+    const anon = new Anonymizer({
+      replaceBuiltinRules: true,
+      rules: [{
+        name: "KV_SPAN",
+        category: EntityCategory.SECRET,
+        level: SecurityLevel.MASK,
+        patterns: [/(?:key)=(\w{3,})/g],
+      }],
+    });
+    // Full match: "key=key123", capture: "key123"
+    // indexOf("key123") in "key=key123" = 4 (correct)
+    // indexOf("key") in "key=key"     = 0 (BUG: would mask keyword, not value)
+    const r = anon.protect("key=key");
+    assert.ok(r.isSafe);
+    assert.ok(r.protectedText.startsWith("key="), `keyword should survive, got: ${r.protectedText}`);
+    assert.ok(!r.protectedText.includes("key=key"), "raw value should be replaced");
+  });
+
+  it("NFC normalization: decomposed and precomposed forms match same rule", () => {
+    // é as NFD (e + combining accent) should normalize to NFC before matching
+    const nfd = "émail@example.com"; // é decomposed + rest = valid email
+    const r = protect(nfd);
+    assert.ok(r.isSafe);
+    assert.equal(r.map.size, 1);
+  });
+});
+
+describe("StreamingAnonymizer — P0 audit fixes", () => {
+  it("throws when buffer exceeds maxBufferSize", () => {
+    const stream = new StreamingAnonymizer({ maxBufferSize: 20 });
+    assert.throws(
+      () => stream.write("this is definitely longer than twenty characters"),
+      /maxBufferSize/,
     );
+  });
+
+  it("subsequent write() calls after abort preserve original violations", () => {
+    const stream = new StreamingAnonymizer({ windowSize: 10 });
+    const key = `sk-proj-${"D".repeat(50)}`;
+    stream.write(`use ${key} here`);
+    const r = stream.write("more text after abort");
+    assert.ok(!r.isSafe);
+    assert.ok(r.violations.includes("OPENAI_API_KEY"));
+  });
+
+  it("double flush() is idempotent and safe", () => {
+    const stream = new StreamingAnonymizer({ windowSize: 50, nonceProvider: () => "t" });
+    stream.write("Reach me at user@domain.com today.");
+    const first = stream.flush();
+    const second = stream.flush();
+    assert.ok(first.isSafe);
+    assert.ok(second.isSafe);
+    assert.equal(second.protectedText, "");
+    assert.equal(second.map.size, first.map.size);
+  });
+
+  it("flush() map is a copy — mutating it does not corrupt internal state", () => {
+    const stream = new StreamingAnonymizer({ windowSize: 200, nonceProvider: () => "cp" });
+    stream.write("contact test@example.com please");
+    const first = stream.flush();
+    first.map.clear();
+    const second = new StreamingAnonymizer({ windowSize: 200, nonceProvider: () => "cp" });
+    second.write("contact test@example.com please");
+    const ref = second.flush();
+    assert.equal(ref.map.size, 1);
   });
 });
 
