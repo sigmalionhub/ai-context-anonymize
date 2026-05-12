@@ -65,7 +65,7 @@ const PHONE_UA: DetectorRule = {
   level: M,
   patterns: [
     /(\+380[\s\-]?\(?\d{2}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2})\b/g,
-    /(\+[1-9]\d{1,14})\b/g,
+    /(\+[1-9]\d{6,14})\b/g,
     /(\b0\d{2}[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2})\b/g,
   ],
 };
@@ -151,7 +151,7 @@ const PASSWORD_ASSIGNMENT: DetectorRule = {
   name: "PASSWORD_IN_TEXT",
   category: EntityCategory.SECRET,
   level: B,
-  patterns: [/(?:password|passwd|pwd|secret|token)\s*[=:]\s*["']?([^\s"',;]{8,})["']?/gi],
+  patterns: [/(?:password|passwd|pwd|secret)\s*[=:]\s*["']?([^\s"',;]{8,})["']?/gi],
 };
 
 const GITHUB_TOKEN: DetectorRule = {

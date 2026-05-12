@@ -30,9 +30,11 @@ export class Anonymizer {
   protect(text: string): ProtectResult {
     const allMatches = this._collectAllMatches(text);
 
+    const seen = new Set<string>();
     const violations: string[] = [];
     for (const m of allMatches) {
-      if (m.rule.level === SecurityLevel.BLOCK && !violations.includes(m.rule.name)) {
+      if (m.rule.level === SecurityLevel.BLOCK && !seen.has(m.rule.name)) {
+        seen.add(m.rule.name);
         violations.push(m.rule.name);
       }
     }

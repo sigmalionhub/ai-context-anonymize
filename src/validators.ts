@@ -26,7 +26,9 @@ export function ibanCheck(raw: string): boolean {
 
   let remainder = 0n;
   for (const ch of numeric) {
-    remainder = (remainder * 10n + BigInt(ch)) % 97n;
+    const digit = Number.parseInt(ch, 10);
+    if (Number.isNaN(digit)) return false;
+    remainder = (remainder * 10n + BigInt(digit)) % 97n;
   }
   return remainder === 1n;
 }

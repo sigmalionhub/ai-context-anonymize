@@ -165,6 +165,33 @@ describe("Anonymizer.restore", () => {
   });
 });
 
+describe("Anonymizer.protect — edge cases", () => {
+  const anon = new Anonymizer();
+
+  it("returns empty map and unchanged text for empty string", () => {
+    const r = anon.protect("");
+    assert.ok(r.isSafe);
+    assert.equal(r.protectedText, "");
+    assert.equal(r.map.size, 0);
+    assert.deepEqual(r.violations, []);
+  });
+
+  it("returns empty map and unchanged text when no PII present", () => {
+    const text = "The weather is nice today.";
+    const r = anon.protect(text);
+    assert.ok(r.isSafe);
+    assert.equal(r.protectedText, text);
+    assert.equal(r.map.size, 0);
+  });
+
+  it("BLOCK wins when EMAIL overlaps with PASSWORD_ASSIGNMENT", () => {
+    const r = anon.protect("Set password=test@example.com in config.");
+    assert.ok(!r.isSafe);
+    assert.ok(r.violations.includes("PASSWORD_IN_TEXT"));
+    assert.equal(r.map.size, 0);
+  });
+});
+
 describe("Anonymizer — custom rules", () => {
   it("works with replaceBuiltinRules", () => {
     const anon = new Anonymizer({
