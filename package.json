@@ -1,5 +1,5 @@
 {
-  "name": "ai-context-anonymize",
+  "name": "@sigmalion/ai-context-anonymize",
   "version": "1.0.0",
   "description": "PII Masking + DLP library for LLM pipelines. GDPR & Ukraine-compliant. Zero dependencies.",
   "type": "module",
@@ -34,6 +34,14 @@
     "security",
     "typescript"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sigmalionhub/ai-context-anonymize.git"
+  },
+  "homepage": "https://github.com/sigmalionhub/ai-context-anonymize#readme",
+  "bugs": {
+    "url": "https://github.com/sigmalionhub/ai-context-anonymize/issues"
+  },
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^25.7.0",
