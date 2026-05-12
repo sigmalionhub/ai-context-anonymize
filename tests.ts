@@ -21,6 +21,7 @@ describe("ibanCheck", () => {
   it("accepts valid UA IBAN", () => assert.ok(ibanCheck("UA213223130000026007233566001")));
   it("accepts valid DE IBAN", () => assert.ok(ibanCheck("DE89370400440532013000")));
   it("rejects broken IBAN", () => assert.ok(!ibanCheck("UA00000000000000000000000000")));
+  it("rejects non-numeric garbage", () => assert.ok(!ibanCheck("NOTANIBAN")));
 });
 
 describe("rnokkpCheck", () => {
@@ -253,7 +254,7 @@ describe("functional API — protect", () => {
     assert.equal(
       tokenFor(r1, "user@test.com"),
       tokenFor(r2, "user@test.com"),
-      "default instance produces same token prefix for same category"
+      "same input produces same token"
     );
   });
 });

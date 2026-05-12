@@ -75,8 +75,7 @@ export class Anonymizer {
   restore(text: string, map: Map<string, string>): string {
     let result = text;
     for (const [token, original] of map) {
-      const escaped = token.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      result = result.replaceAll(new RegExp(escaped, "g"), () => original);
+      result = result.replaceAll(token, original);
     }
     return result;
   }

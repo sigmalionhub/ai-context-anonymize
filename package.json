@@ -1,6 +1,6 @@
 {
   "name": "@sigmalion/ai-context-anonymize",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "PII Masking + DLP library for LLM pipelines. GDPR & Ukraine-compliant. Zero dependencies.",
   "type": "module",
   "files": [
