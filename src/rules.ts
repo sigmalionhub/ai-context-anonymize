@@ -133,13 +133,6 @@ const RSA_PRIVATE_KEY: DetectorRule = {
   patterns: [/-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----[\s\S]+?-----END (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----/g],
 };
 
-const SSH_PRIVATE_KEY: DetectorRule = {
-  name: "SSH_PRIVATE_KEY",
-  category: EntityCategory.SECRET,
-  level: B,
-  patterns: [/-----BEGIN OPENSSH PRIVATE KEY-----[\s\S]+?-----END OPENSSH PRIVATE KEY-----/g],
-};
-
 const DB_CONNECTION: DetectorRule = {
   name: "DB_CONNECTION_STRING",
   category: EntityCategory.DATABASE,
@@ -199,7 +192,6 @@ export const BUILT_IN_RULES: readonly DetectorRule[] = Object.freeze([
   STRIPE_KEY,
   BEARER_TOKEN,
   RSA_PRIVATE_KEY,
-  SSH_PRIVATE_KEY,
   DB_CONNECTION,
   PASSWORD_ASSIGNMENT,
   GITHUB_TOKEN,

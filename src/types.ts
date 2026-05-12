@@ -5,7 +5,7 @@ export const SecurityLevel = {
   BLOCK: "BLOCK" as SecurityLevel,
 } as const;
 
-export type EntityCategory = "p" | "id" | "fin" | "cry" | "ph" | "em" | "adr" | "k" | "db";
+export type EntityCategory = "p" | "id" | "fin" | "cry" | "ph" | "em" | "k" | "db";
 export const EntityCategory = {
   PERSON:    "p"   as EntityCategory,
   IDENTITY:  "id"  as EntityCategory,
@@ -13,7 +13,6 @@ export const EntityCategory = {
   CRYPTO:    "cry" as EntityCategory,
   PHONE:     "ph"  as EntityCategory,
   EMAIL:     "em"  as EntityCategory,
-  ADDRESS:   "adr" as EntityCategory,
   SECRET:    "k"   as EntityCategory,
   DATABASE:  "db"  as EntityCategory,
 } as const;
